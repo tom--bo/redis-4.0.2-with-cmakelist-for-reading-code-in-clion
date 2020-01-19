@@ -3510,7 +3510,7 @@ void redisSetProcTitle(char *title) {
 #endif
 }
 
-int main(int argc, char **argv) {
+int original_main(int argc, char **argv) {
     struct timeval tv;
     int j;
 
