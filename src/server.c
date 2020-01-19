@@ -38,7 +38,6 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <errno.h>
-#include <assert.h>
 #include <ctype.h>
 #include <stdarg.h>
 #include <arpa/inet.h>
@@ -48,10 +47,6 @@
 #include <sys/resource.h>
 #include <sys/uio.h>
 #include <sys/un.h>
-#include <limits.h>
-#include <float.h>
-#include <math.h>
-#include <sys/resource.h>
 #include <sys/utsname.h>
 #include <locale.h>
 #include <sys/socket.h>
@@ -1789,9 +1784,9 @@ void resetServerStats(void) {
 void initServer(void) {
     int j;
 
-    signal(SIGHUP, SIG_IGN);
-    signal(SIGPIPE, SIG_IGN);
-    setupSignalHandlers();
+    // signal(SIGHUP, SIG_IGN);
+    // signal(SIGPIPE, SIG_IGN);
+    // setupSignalHandlers();
 
     if (server.syslog_enabled) {
         openlog(server.syslog_ident, LOG_PID | LOG_NDELAY | LOG_NOWAIT,
@@ -1932,17 +1927,6 @@ void initServer(void) {
         }
     }
 
-    /* 32 bit instances are limited to 4GB of address space, so if there is
-     * no explicit limit in the user provided configuration we set a limit
-     * at 3 GB using maxmemory with 'noeviction' policy'. This avoids
-     * useless crashes of the Redis instance for out of memory. */
-    if (server.arch_bits == 32 && server.maxmemory == 0) {
-        serverLog(LL_WARNING,"Warning: 32 bit instance detected but no memory limit set. Setting 3 GB maxmemory limit with 'noeviction' policy now.");
-        server.maxmemory = 3072LL*(1024*1024); /* 3 GB */
-        server.maxmemory_policy = MAXMEMORY_NO_EVICTION;
-    }
-
-    if (server.cluster_enabled) clusterInit();
     replicationScriptCacheInit();
     scriptingInit(1);
     slowlogInit();
@@ -3453,63 +3437,12 @@ void redisAsciiArt(void) {
     zfree(buf);
 }
 
-static void sigShutdownHandler(int sig) {
-    char *msg;
-
-    switch (sig) {
-    case SIGINT:
-        msg = "Received SIGINT scheduling shutdown...";
-        break;
-    case SIGTERM:
-        msg = "Received SIGTERM scheduling shutdown...";
-        break;
-    default:
-        msg = "Received shutdown signal, scheduling shutdown...";
-    };
-
-    /* SIGINT is often delivered via Ctrl+C in an interactive session.
-     * If we receive the signal the second time, we interpret this as
-     * the user really wanting to quit ASAP without waiting to persist
-     * on disk. */
-    if (server.shutdown_asap && sig == SIGINT) {
-        serverLogFromHandler(LL_WARNING, "You insist... exiting now.");
-        rdbRemoveTempFile(getpid());
-        exit(1); /* Exit with an error since this was not a clean shutdown. */
-    } else if (server.loading) {
-        exit(0);
-    }
-
-    serverLogFromHandler(LL_WARNING, msg);
-    server.shutdown_asap = 1;
-}
-
-void setupSignalHandlers(void) {
-    struct sigaction act;
-
-    /* When the SA_SIGINFO flag is set in sa_flags then sa_sigaction is used.
-     * Otherwise, sa_handler is used. */
-    sigemptyset(&act.sa_mask);
-    act.sa_flags = 0;
-    act.sa_handler = sigShutdownHandler;
-    sigaction(SIGTERM, &act, NULL);
-    sigaction(SIGINT, &act, NULL);
-
-#ifdef HAVE_BACKTRACE
-    sigemptyset(&act.sa_mask);
-    act.sa_flags = SA_NODEFER | SA_RESETHAND | SA_SIGINFO;
-    act.sa_sigaction = sigsegvHandler;
-    sigaction(SIGSEGV, &act, NULL);
-    sigaction(SIGBUS, &act, NULL);
-    sigaction(SIGFPE, &act, NULL);
-    sigaction(SIGILL, &act, NULL);
-#endif
-    return;
-}
 
 void memtest(size_t megabytes, int passes);
 
 /* Returns 1 if there is --sentinel among the arguments or if
  * argv[0] contains "redis-sentinel". */
+/*
 int checkForSentinelMode(int argc, char **argv) {
     int j;
 
@@ -3518,6 +3451,7 @@ int checkForSentinelMode(int argc, char **argv) {
         if (!strcmp(argv[j],"--sentinel")) return 1;
     return 0;
 }
+*/
 
 /* Function called at startup to load RDB or AOF file in memory. */
 void loadDataFromDisk(void) {
@@ -3576,131 +3510,9 @@ void redisSetProcTitle(char *title) {
 #endif
 }
 
-/*
- * Check whether systemd or upstart have been used to start redis.
- */
-
-int redisSupervisedUpstart(void) {
-    const char *upstart_job = getenv("UPSTART_JOB");
-
-    if (!upstart_job) {
-        serverLog(LL_WARNING,
-                "upstart supervision requested, but UPSTART_JOB not found");
-        return 0;
-    }
-
-    serverLog(LL_NOTICE, "supervised by upstart, will stop to signal readiness");
-    raise(SIGSTOP);
-    unsetenv("UPSTART_JOB");
-    return 1;
-}
-
-int redisSupervisedSystemd(void) {
-    const char *notify_socket = getenv("NOTIFY_SOCKET");
-    int fd = 1;
-    struct sockaddr_un su;
-    struct iovec iov;
-    struct msghdr hdr;
-    int sendto_flags = 0;
-
-    if (!notify_socket) {
-        serverLog(LL_WARNING,
-                "systemd supervision requested, but NOTIFY_SOCKET not found");
-        return 0;
-    }
-
-    if ((strchr("@/", notify_socket[0])) == NULL || strlen(notify_socket) < 2) {
-        return 0;
-    }
-
-    serverLog(LL_NOTICE, "supervised by systemd, will signal readiness");
-    if ((fd = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
-        serverLog(LL_WARNING,
-                "Can't connect to systemd socket %s", notify_socket);
-        return 0;
-    }
-
-    memset(&su, 0, sizeof(su));
-    su.sun_family = AF_UNIX;
-    strncpy (su.sun_path, notify_socket, sizeof(su.sun_path) -1);
-    su.sun_path[sizeof(su.sun_path) - 1] = '\0';
-
-    if (notify_socket[0] == '@')
-        su.sun_path[0] = '\0';
-
-    memset(&iov, 0, sizeof(iov));
-    iov.iov_base = "READY=1";
-    iov.iov_len = strlen("READY=1");
-
-    memset(&hdr, 0, sizeof(hdr));
-    hdr.msg_name = &su;
-    hdr.msg_namelen = offsetof(struct sockaddr_un, sun_path) +
-        strlen(notify_socket);
-    hdr.msg_iov = &iov;
-    hdr.msg_iovlen = 1;
-
-    unsetenv("NOTIFY_SOCKET");
-#ifdef HAVE_MSG_NOSIGNAL
-    sendto_flags |= MSG_NOSIGNAL;
-#endif
-    if (sendmsg(fd, &hdr, sendto_flags) < 0) {
-        serverLog(LL_WARNING, "Can't send notification to systemd");
-        close(fd);
-        return 0;
-    }
-    close(fd);
-    return 1;
-}
-
-int redisIsSupervised(int mode) {
-    if (mode == SUPERVISED_AUTODETECT) {
-        const char *upstart_job = getenv("UPSTART_JOB");
-        const char *notify_socket = getenv("NOTIFY_SOCKET");
-
-        if (upstart_job) {
-            redisSupervisedUpstart();
-        } else if (notify_socket) {
-            redisSupervisedSystemd();
-        }
-    } else if (mode == SUPERVISED_UPSTART) {
-        return redisSupervisedUpstart();
-    } else if (mode == SUPERVISED_SYSTEMD) {
-        return redisSupervisedSystemd();
-    }
-
-    return 0;
-}
-
-
 int main(int argc, char **argv) {
     struct timeval tv;
     int j;
-
-#ifdef REDIS_TEST
-    if (argc == 3 && !strcasecmp(argv[1], "test")) {
-        if (!strcasecmp(argv[2], "ziplist")) {
-            return ziplistTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "quicklist")) {
-            quicklistTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "intset")) {
-            return intsetTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "zipmap")) {
-            return zipmapTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "sha1test")) {
-            return sha1Test(argc, argv);
-        } else if (!strcasecmp(argv[2], "util")) {
-            return utilTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "sds")) {
-            return sdsTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "endianconv")) {
-            return endianconvTest(argc, argv);
-        } else if (!strcasecmp(argv[2], "crc64")) {
-            return crc64Test(argc, argv);
-        }
-
-        return -1; /* test not found */
-    }
-#endif
 
     /* We need to initialize our libraries, and the server configuration. */
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
@@ -3713,7 +3525,7 @@ int main(int argc, char **argv) {
     char hashseed[16];
     getRandomHexChars(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed((uint8_t*)hashseed);
-    server.sentinel_mode = checkForSentinelMode(argc,argv);
+    server.sentinel_mode = 0; // don't use sentinel
     initServerConfig();
     moduleInitModulesSystem();
 
@@ -3724,111 +3536,10 @@ int main(int argc, char **argv) {
     server.exec_argv[argc] = NULL;
     for (j = 0; j < argc; j++) server.exec_argv[j] = zstrdup(argv[j]);
 
-    /* We need to init sentinel right now as parsing the configuration file
-     * in sentinel mode will have the effect of populating the sentinel
-     * data structures with master nodes to monitor. */
-    if (server.sentinel_mode) {
-        initSentinelConfig();
-        initSentinel();
-    }
-
-    /* Check if we need to start in redis-check-rdb/aof mode. We just execute
-     * the program main. However the program is part of the Redis executable
-     * so that we can easily execute an RDB check on loading errors. */
-    if (strstr(argv[0],"redis-check-rdb") != NULL)
-        redis_check_rdb_main(argc,argv,NULL);
-    else if (strstr(argv[0],"redis-check-aof") != NULL)
-        redis_check_aof_main(argc,argv);
-
-    if (argc >= 2) {
-        j = 1; /* First option to parse in argv[] */
-        sds options = sdsempty();
-        char *configfile = NULL;
-
-        /* Handle special options --help and --version */
-        if (strcmp(argv[1], "-v") == 0 ||
-            strcmp(argv[1], "--version") == 0) version();
-        if (strcmp(argv[1], "--help") == 0 ||
-            strcmp(argv[1], "-h") == 0) usage();
-        if (strcmp(argv[1], "--test-memory") == 0) {
-            if (argc == 3) {
-                memtest(atoi(argv[2]),50);
-                exit(0);
-            } else {
-                fprintf(stderr,"Please specify the amount of memory to test in megabytes.\n");
-                fprintf(stderr,"Example: ./redis-server --test-memory 4096\n\n");
-                exit(1);
-            }
-        }
-
-        /* First argument is the config file name? */
-        if (argv[j][0] != '-' || argv[j][1] != '-') {
-            configfile = argv[j];
-            server.configfile = getAbsolutePath(configfile);
-            /* Replace the config file in server.exec_argv with
-             * its absoulte path. */
-            zfree(server.exec_argv[j]);
-            server.exec_argv[j] = zstrdup(server.configfile);
-            j++;
-        }
-
-        /* All the other options are parsed and conceptually appended to the
-         * configuration file. For instance --port 6380 will generate the
-         * string "port 6380\n" to be parsed after the actual file name
-         * is parsed, if any. */
-        while(j != argc) {
-            if (argv[j][0] == '-' && argv[j][1] == '-') {
-                /* Option name */
-                if (!strcmp(argv[j], "--check-rdb")) {
-                    /* Argument has no options, need to skip for parsing. */
-                    j++;
-                    continue;
-                }
-                if (sdslen(options)) options = sdscat(options,"\n");
-                options = sdscat(options,argv[j]+2);
-                options = sdscat(options," ");
-            } else {
-                /* Option argument */
-                options = sdscatrepr(options,argv[j],strlen(argv[j]));
-                options = sdscat(options," ");
-            }
-            j++;
-        }
-        if (server.sentinel_mode && configfile && *configfile == '-') {
-            serverLog(LL_WARNING,
-                "Sentinel config from STDIN not allowed.");
-            serverLog(LL_WARNING,
-                "Sentinel needs config file on disk to save state.  Exiting...");
-            exit(1);
-        }
-        resetServerSaveParams();
-        loadServerConfig(configfile,options);
-        sdsfree(options);
-    }
-
-    serverLog(LL_WARNING, "oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo");
-    serverLog(LL_WARNING,
-        "Redis version=%s, bits=%d, commit=%s, modified=%d, pid=%d, just started",
-            REDIS_VERSION,
-            (sizeof(long) == 8) ? 64 : 32,
-            redisGitSHA1(),
-            strtol(redisGitDirty(),NULL,10) > 0,
-            (int)getpid());
-
-    if (argc == 1) {
-        serverLog(LL_WARNING, "Warning: no config file specified, using the default config. In order to specify a config file use %s /path/to/%s.conf", argv[0], server.sentinel_mode ? "sentinel" : "redis");
-    } else {
-        serverLog(LL_WARNING, "Configuration loaded");
-    }
-
-    server.supervised = redisIsSupervised(server.supervised_mode);
-    int background = server.daemonize && !server.supervised;
-    if (background) daemonize();
+    server.supervised = 0; // always 0
 
     initServer();
-    if (background || server.pidfile) createPidFile();
     redisSetProcTitle(argv[0]);
-    redisAsciiArt();
     checkTcpBacklogSettings();
 
     if (!server.sentinel_mode) {
@@ -3839,20 +3550,10 @@ int main(int argc, char **argv) {
     #endif
         moduleLoadFromQueue();
         loadDataFromDisk();
-        if (server.cluster_enabled) {
-            if (verifyClusterConfigWithData() == C_ERR) {
-                serverLog(LL_WARNING,
-                    "You can't have keys in a DB different than DB 0 when in "
-                    "Cluster mode. Exiting.");
-                exit(1);
-            }
-        }
         if (server.ipfd_count > 0)
             serverLog(LL_NOTICE,"Ready to accept connections");
         if (server.sofd > 0)
             serverLog(LL_NOTICE,"The server is now ready to accept connections at %s", server.unixsocket);
-    } else {
-        sentinelIsRunning();
     }
 
     /* Warning the user about suspicious maxmemory setting. */
