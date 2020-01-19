@@ -879,6 +879,33 @@ src/lzf_d.c.s:
 	$(MAKE) -f CMakeFiles/redis-server.dir/build.make CMakeFiles/redis-server.dir/src/lzf_d.c.s
 .PHONY : src/lzf_d.c.s
 
+src/main.o: src/main.c.o
+
+.PHONY : src/main.o
+
+# target to build an object file
+src/main.c.o:
+	$(MAKE) -f CMakeFiles/redis-server.dir/build.make CMakeFiles/redis-server.dir/src/main.c.o
+.PHONY : src/main.c.o
+
+src/main.i: src/main.c.i
+
+.PHONY : src/main.i
+
+# target to preprocess a source file
+src/main.c.i:
+	$(MAKE) -f CMakeFiles/redis-server.dir/build.make CMakeFiles/redis-server.dir/src/main.c.i
+.PHONY : src/main.c.i
+
+src/main.s: src/main.c.s
+
+.PHONY : src/main.s
+
+# target to generate assembly for a file
+src/main.c.s:
+	$(MAKE) -f CMakeFiles/redis-server.dir/build.make CMakeFiles/redis-server.dir/src/main.c.s
+.PHONY : src/main.c.s
+
 src/memtest.o: src/memtest.c.o
 
 .PHONY : src/memtest.o
@@ -1971,6 +1998,9 @@ help:
 	@echo "... src/lzf_d.o"
 	@echo "... src/lzf_d.i"
 	@echo "... src/lzf_d.s"
+	@echo "... src/main.o"
+	@echo "... src/main.i"
+	@echo "... src/main.s"
 	@echo "... src/memtest.o"
 	@echo "... src/memtest.i"
 	@echo "... src/memtest.s"

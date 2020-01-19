@@ -39,6 +39,7 @@ message(STATUS "Project root directory is: ${REDIS_ROOT}")
 include_directories(deps/jemalloc/include/jemalloc deps/lua/src deps/hiredis)
 include_directories(src)
 add_executable(redis-server
+        src/main.c
         src/adlist.c
         src/quicklist.c
         src/ae.c
