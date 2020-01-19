@@ -1587,7 +1587,6 @@ int zslLexValueLteMax(sds value, zlexrangespec *spec);
 /* Core functions */
 int freeMemoryIfNeeded(void);
 int processCommand(client *c);
-void setupSignalHandlers(void);
 struct redisCommand *lookupCommand(sds name);
 struct redisCommand *lookupCommandByCString(char *s);
 struct redisCommand *lookupCommandOrOriginal(sds name);
